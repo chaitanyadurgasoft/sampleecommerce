@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: login-service
-        image: login-service:2.0.0
+        image: chaitanyamanikumar/login-service:2.0.0
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080

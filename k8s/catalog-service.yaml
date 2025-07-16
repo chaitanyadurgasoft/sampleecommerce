@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: catalog-service
-        image: catalog-service:2.0.0
+        image: chaitanyamanikumar/catalog-service:2.0.0
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8081

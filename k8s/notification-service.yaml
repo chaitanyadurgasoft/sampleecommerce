@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: notification-service
-        image: notification-service:2.0.0
+        image: chaitanyamanikumar/notification-service:2.0.0
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8083

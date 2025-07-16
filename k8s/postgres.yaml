@@ -42,19 +42,23 @@ spec:
             secretKeyRef:
               name: database-secret
               key: POSTGRES_PASSWORD
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
         volumeMounts:
         - name: postgres-storage
           mountPath: /var/lib/postgresql/data
         - name: postgres-init
           mountPath: /docker-entrypoint-initdb.d
           readOnly: true
+        - name: shared-files
+          mountPath: /shared
         resources:
           requests:
             memory: "256Mi"
             cpu: "250m"
           limits:
-            memory: "512Mi"
-            cpu: "500m"
+            memory: "1Gi"
+            cpu: "1000m"
         livenessProbe:
           exec:
             command:
@@ -80,13 +84,15 @@ spec:
       volumes:
       - name: postgres-storage
         persistentVolumeClaim:
-          claimName: postgres-pvc
+          claimName: postgres-efs-pvc
       - name: postgres-init
-        hostPath:
-          # UPDATE THIS PATH to your actual project directory
-          path: /absolute/path/to/your/project/sql
-          type: Directory
+        configMap:
+          name: postgres-init-script
+      - name: shared-files
+        persistentVolumeClaim:
+          claimName: shared-files-pvc
 ---
+
 apiVersion: v1
 kind: Service
 metadata:
