@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-urls
+  namespace: ecommerce
+data:
+  PAYMENT_SERVICE_URL: "http://payment-service:8082"
+  NOTIFICATION_SERVICE_URL: "http://notification-service:8083"
+  LOGIN_SERVICE_URL: "http://login-service:8080"
+  CATALOG_SERVICE_URL: "http://catalog-service:8081"

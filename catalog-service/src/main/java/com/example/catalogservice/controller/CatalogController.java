@@ -3,9 +3,11 @@ package com.example.catalogservice.controller;
 import com.example.catalogservice.dto.BuyRequest;
 import com.example.catalogservice.dto.BuyResponse;
 import com.example.catalogservice.dto.PaymentRequest;
-import com.example.catalogservice.model.Product;
+import com.example.catalogservice.entity.Product;
+import com.example.catalogservice.repository.ProductRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -13,9 +15,11 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.client.RestClientException;
 
-import java.util.Arrays;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
+import java.util.HashMap;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
@@ -24,8 +28,11 @@ public class CatalogController {
 
     private static final Logger logger = LoggerFactory.getLogger(CatalogController.class);
     
-    @Value("${payment.service.url:http://payment-service:8080}")
+    @Value("${payment.service.url:http://payment-service:8082}")
     private String paymentServiceUrl;
+    
+    @Autowired
+    private ProductRepository productRepository;
     
     private final RestTemplate restTemplate;
     
@@ -35,20 +42,59 @@ public class CatalogController {
     
     @GetMapping("/products")
     public ResponseEntity<List<Product>> getProducts() {
-        logger.info("Fetching product catalog");
+        logger.info("Fetching product catalog from database");
         
-        List<Product> products = Arrays.asList(
-            new Product(1L, "Laptop", 999.99, "High-performance laptop for work and gaming", "Electronics", "https://images.unsplash.com/photo-1496181133206-80ce9b88a853?w=300"),
-            new Product(2L, "Smartphone", 699.99, "Latest smartphone with advanced camera", "Electronics", "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=300"),
-            new Product(3L, "Headphones", 199.99, "Wireless noise-canceling headphones", "Electronics", "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=300"),
-            new Product(4L, "Coffee Maker", 149.99, "Automatic coffee maker with timer", "Home & Kitchen", "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=300"),
-            new Product(5L, "Running Shoes", 89.99, "Comfortable running shoes for all terrains", "Sports & Outdoors", "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=300"),
-            new Product(6L, "Backpack", 59.99, "Durable travel backpack with multiple compartments", "Travel", "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=300"),
-            new Product(7L, "Desk Chair", 249.99, "Ergonomic office chair with lumbar support", "Furniture", "https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=300"),
-            new Product(8L, "Water Bottle", 24.99, "Insulated stainless steel water bottle", "Sports & Outdoors", "https://images.unsplash.com/photo-1602143407151-7111542de6e8?w=300")
-        );
+        try {
+            List<Product> products = productRepository.findAll();
+            logger.info("Retrieved {} products from database", products.size());
+            return ResponseEntity.ok(products);
+        } catch (Exception e) {
+            logger.error("Error fetching products: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+    
+    @GetMapping("/products/{id}")
+    public ResponseEntity<Product> getProduct(@PathVariable Long id) {
+        logger.info("Fetching product with ID: {}", id);
         
-        return ResponseEntity.ok(products);
+        try {
+            Optional<Product> productOpt = productRepository.findById(id);
+            if (productOpt.isPresent()) {
+                return ResponseEntity.ok(productOpt.get());
+            } else {
+                return ResponseEntity.notFound().build();
+            }
+        } catch (Exception e) {
+            logger.error("Error fetching product {}: {}", id, e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+    
+    @GetMapping("/products/category/{category}")
+    public ResponseEntity<List<Product>> getProductsByCategory(@PathVariable String category) {
+        logger.info("Fetching products for category: {}", category);
+        
+        try {
+            List<Product> products = productRepository.findByCategory(category);
+            return ResponseEntity.ok(products);
+        } catch (Exception e) {
+            logger.error("Error fetching products by category: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+    
+    @GetMapping("/categories")
+    public ResponseEntity<List<String>> getCategories() {
+        logger.info("Fetching all product categories");
+        
+        try {
+            List<String> categories = productRepository.findAllCategories();
+            return ResponseEntity.ok(categories);
+        } catch (Exception e) {
+            logger.error("Error fetching categories: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
     
     @PostMapping("/buy")
@@ -62,66 +108,96 @@ public class CatalogController {
             return ResponseEntity.badRequest().body(errorResponse);
         }
         
-        // Find the product
-        Optional<Product> productOpt = getProductById(buyRequest.getProductId());
-        if (productOpt.isEmpty()) {
-            BuyResponse errorResponse = new BuyResponse(false, "Product not found", null, null, null);
-            return ResponseEntity.notFound().build();
-        }
-        
-        Product product = productOpt.get();
-        
         try {
+            // Find the product in database
+            Optional<Product> productOpt = productRepository.findById(buyRequest.getProductId());
+            if (productOpt.isEmpty()) {
+                BuyResponse errorResponse = new BuyResponse(false, "Product not found", null, null, null);
+                return ResponseEntity.notFound().build();
+            }
+            
+            Product product = productOpt.get();
+            
+            // Check stock availability
+            if (product.getStockQuantity() <= 0) {
+                BuyResponse errorResponse = new BuyResponse(false, "Product out of stock", null, product.getName(), product.getPrice().doubleValue());
+                return ResponseEntity.status(HttpStatus.CONFLICT).body(errorResponse);
+            }
+            
             // Create payment request
             PaymentRequest paymentRequest = new PaymentRequest(
                 buyRequest.getUserId(), 
                 buyRequest.getProductId(), 
-                product.getPrice(),
+                product.getPrice().doubleValue(),
                 product.getName()
             );
             
             // Call payment service
-            logger.info("Calling payment service at: {}/payment", paymentServiceUrl);
+            logger.info("Calling payment service at: {}/api/payment", paymentServiceUrl);
             ResponseEntity<String> paymentResponse = restTemplate.postForEntity(
-                paymentServiceUrl + "/payment", 
+                paymentServiceUrl + "/api/payment", 
                 paymentRequest, 
                 String.class
             );
             
             if (paymentResponse.getStatusCode().is2xxSuccessful()) {
-                // Payment successful
+                // Payment successful - update stock
+                product.setStockQuantity(product.getStockQuantity() - 1);
+                productRepository.save(product);
+                
                 String transactionId = "TXN-" + System.currentTimeMillis();
                 BuyResponse successResponse = new BuyResponse(
                     true, 
                     "Purchase successful", 
                     transactionId,
                     product.getName(),
-                    product.getPrice()
+                    product.getPrice().doubleValue()
                 );
                 logger.info("Purchase completed successfully for user: {} and product: {}", 
                            buyRequest.getUserId(), product.getName());
                 return ResponseEntity.ok(successResponse);
             } else {
                 // Payment failed
-                BuyResponse errorResponse = new BuyResponse(false, "Payment failed", null, product.getName(), product.getPrice());
+                BuyResponse errorResponse = new BuyResponse(false, "Payment failed", null, product.getName(), product.getPrice().doubleValue());
                 return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED).body(errorResponse);
             }
             
         } catch (RestClientException e) {
             logger.error("Error calling payment service: {}", e.getMessage());
-            BuyResponse errorResponse = new BuyResponse(false, "Payment service unavailable", null, product.getName(), product.getPrice());
+            BuyResponse errorResponse = new BuyResponse(false, "Payment service unavailable", null, null, null);
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(errorResponse);
+        } catch (Exception e) {
+            logger.error("Error processing purchase: {}", e.getMessage());
+            BuyResponse errorResponse = new BuyResponse(false, "Purchase processing failed", null, null, null);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
         }
     }
     
     @GetMapping("/health")
     public ResponseEntity<String> health() {
-        return ResponseEntity.ok("Catalog service is running!");
+        return ResponseEntity.ok("Catalog service with database is running!");
     }
     
-    private Optional<Product> getProductById(Long productId) {
-        return getProducts().getBody().stream()
-            .filter(product -> product.getId().equals(productId))
-            .findFirst();
+    @GetMapping("/stats")
+    public ResponseEntity<Map<String, Object>> getStats() {
+        try {
+            long totalProducts = productRepository.count();
+            long inStockProducts = productRepository.countByStockQuantityGreaterThan(0);
+            List<String> categories = productRepository.findAllCategories();
+            
+            Map<String, Object> stats = new HashMap<>();
+            stats.put("service", "catalog-service");
+            stats.put("status", "healthy");
+            stats.put("totalProducts", totalProducts);
+            stats.put("inStockProducts", inStockProducts);
+            stats.put("totalCategories", categories.size());
+            stats.put("timestamp", java.time.LocalDateTime.now().toString());
+            stats.put("database", "PostgreSQL - catalog_schema");
+            
+            return ResponseEntity.ok(stats);
+        } catch (Exception e) {
+            logger.error("Error fetching catalog stats: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 }
